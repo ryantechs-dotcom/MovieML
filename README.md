@@ -1,48 +1,43 @@
-# Movie Similarity Recommender (Cosine Similarity with MapReduce)
+# Item-Item Movie Recommender with MapReduce
 
-## 📌 Overview
+Finds similar movies from user ratings using item-item collaborative filtering. Cosine similarity is computed across co-rated movie pairs in a three-stage MapReduce job written with `mrjob`. The same job runs on a laptop or scales out unchanged to Hadoop or Amazon EMR.
 
-This project implements a **movie recommendation engine** using **cosine similarity** on user ratings. Built with the **MapReduce paradigm using Python's `mrjob`**, the system identifies and ranks similar movies based on co-occurrence and rating similarity.
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
+![mrjob](https://img.shields.io/badge/mrjob-MapReduce-66CCFF?style=flat-square)
+![Hadoop](https://img.shields.io/badge/Hadoop%20%2F%20EMR-ready-66CCFF?style=flat-square&logo=apachehadoop&logoColor=black)
 
-## 🛠 Technologies Used
+## How it works
 
-- Python
-- [mrjob](https://mrjob.readthedocs.io/en/latest/)
-- Hadoop or local runner
-- MovieLens 100k dataset (`u.data`, `u.item`)
+| Step | Mapper | Reducer |
+|---|---|---|
+| 1. Group by user | `line → (userID, (movieID, rating))` | collect each user's `(movie, rating)` list |
+| 2. Build pairs | for every pair of movies a user rated, emit `((m1, m2), (r1, r2))` in both orders | cosine similarity + co-rating count |
+| 3. Rank | re-key as `((movie name, score), (similar movie, n))` so the shuffle sorts results | emit `movie → (similar movie, score, n)` |
 
-## 📂 Input Data
+**Quality filter.** A pair is kept only if more than 10 users rated both movies and cosine similarity exceeds 0.95. This removes the high-similarity, low-evidence pairs that dominate raw output.
 
-- `u.data` — Contains user ratings in the format: `userID \t movieID \t rating \t timestamp`
-- `u.item` — Metadata file containing movieID and movie name, delimited by `|`
+**Scaling note.** Step 2 is O(k²) in the number of movies each user rated, so heavy raters dominate the shuffle. Capping or sampling per-user histories is the usual fix at larger scale.
 
-## 🔍 Features
+## Output format
 
-- Calculates **cosine similarity** between movie pairs.
-- Filters out weak matches (low score or few co-ratings).
-- Outputs top similar movie pairs with:
-  - Similarity score
-  - Number of co-ratings
-- Uses **combinations** to find all pairs each user has rated.
-- Applies **Facade pattern** to simplify the computation stages.
+```
+"Movie A (year)"   ["Movie B (year)", <cosine score>, <co-rating count>]
+```
 
-## 🧠 How It Works
+## Run it
 
-### MapReduce Steps:
+The job reads the **MovieLens 100K** format (`u.data` tab-separated, `u.item` pipe-separated), available from [GroupLens](https://grouplens.org/datasets/movielens/100k/).
 
-1. **Step 1: Parse Input**
-   - Mapper: Emit `(userID, (movieID, rating))`
-   - Reducer: Group ratings by user
+```bash
+pip install mrjob
+python MovieSimilarities.py --items=ml-100k/u.item ml-100k/u.data > similarities.txt
 
-2. **Step 2: Generate Movie Pairs**
-   - Mapper: Emit `((movieID1, movieID2), (rating1, rating2))`
-   - Reducer: Compute cosine similarity and count co-ratings
+# on EMR (requires AWS credentials configured for mrjob)
+python MovieSimilarities.py -r emr --items=ml-100k/u.item ml-100k/u.data
+```
 
-3. **Step 3: Sort and Output**
-   - Mapper: Reformat for sorting by movie name and score
-   - Reducer: Output final similar movie pairs
+## Next steps
 
-## 🧪 Example Output
-
-"Star Wars (1977)" ("Empire Strikes Back, The (1980)", 0.97, 55)
-"Toy Story (1995)" ("Bug's Life, A (1998)", 0.96, 48)
+- Add a parser for the included MovieLens 1M files (`::`-delimited `ratings.dat` / `movies.dat`)
+- Mean-center ratings (adjusted cosine) to correct for users who rate everything high
+- Serve top-N neighbors per movie from the output as a lightweight "because you watched" API
